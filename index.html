@@ -8,17 +8,17 @@
     body {
       margin: 0;
       font-family: 'Segoe UI', sans-serif;
-      background: #f9f9f9;
+      background: #f5f6fa;
       color: #333;
       padding: 20px;
     }
     .container {
       max-width: 600px;
       margin: auto;
-      padding: 20px;
       background: #fff;
+      padding: 20px;
       border-radius: 16px;
-      box-shadow: 0 8px 20px rgba(0,0,0,0.05);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
     }
     h1 {
       font-size: 1.5rem;
@@ -31,7 +31,26 @@
       font-size: 1rem;
       border: 1px solid #ccc;
       border-radius: 8px;
-      margin-bottom: 10px;
+      margin-bottom: 5px;
+    }
+    ul.autocomplete {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 10px 0;
+      max-height: 150px;
+      overflow-y: auto;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      background: white;
+      position: relative;
+      z-index: 1000;
+    }
+    ul.autocomplete li {
+      padding: 8px;
+      cursor: pointer;
+    }
+    ul.autocomplete li:hover {
+      background: #e9f0ff;
     }
     button {
       width: 100%;
@@ -51,25 +70,54 @@
 <body>
   <div class="container">
     <h1>📊 아파트 실거래가 시세 (2년)</h1>
-    <input id="regionInput" placeholder="예: 경기 안양시" />
-    <input id="aptInput" placeholder="예: 삼성래미안아파트" />
+    <input id="regionInput" placeholder="지역(동)을 입력하세요" oninput="showSuggestions(this, 'region')" />
+    <ul id="regionSuggestions" class="autocomplete"></ul>
+    <input id="aptInput" placeholder="아파트명을 입력하세요" oninput="showSuggestions(this, 'apt')" />
+    <ul id="aptSuggestions" class="autocomplete"></ul>
     <button onclick="fetchData()">조회하기</button>
     <canvas id="priceChart" height="300"></canvas>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
+    let dongList = [];
+    const knownApts = ["래미안", "래미안 타워팰리스", "타워팰리스", "삼성래미안", "자이", "푸르지오"];
+    let selectedDongCode = "";
+
+    fetch("legal_dong_codes.json")
+      .then(res => res.json())
+      .then(data => { dongList = data; });
+
+    function showSuggestions(inputEl, type) {
+      const val = inputEl.value.trim();
+      const box = document.getElementById(type === 'region' ? "regionSuggestions" : "aptSuggestions");
+      box.innerHTML = "";
+      if (!val) return;
+
+      const source = type === 'region' ? dongList.map(d => d.name) : knownApts;
+      const matches = source.filter(name => name.includes(val)).slice(0, 7);
+
+      matches.forEach(name => {
+        const li = document.createElement("li");
+        li.textContent = name;
+        li.onclick = () => {
+          inputEl.value = name;
+          box.innerHTML = "";
+        };
+        box.appendChild(li);
+      });
+    }
+
     async function fetchData() {
       const region = document.getElementById("regionInput").value.trim();
       const apt = document.getElementById("aptInput").value.trim();
-      if (!region || !apt) return alert("지역과 아파트명을 모두 입력해주세요.");
+      const dong = dongList.find(d => region.includes(d.name));
+      if (!dong) return alert("해당 지역의 법정동코드를 찾을 수 없습니다.");
+      selectedDongCode = dong.code.substring(0,5);
 
       const dealYMDs = getPastMonths(24);
-      const code = getLawdCd(region);
-      if (!code) return alert("해당 지역의 법정동코드를 찾을 수 없습니다.");
-
-      const promises = dealYMDs.map(ym => 
-        fetch(`https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade?LAWD_CD=${code}&DEAL_YMD=${ym}&serviceKey=K2kbs6Y7ensRMMi1KCRh%2FHDeBvqIx0oBk%2F2z6tksDZw1cTaZXDuNqYQJX2Er4CZWQXNOI6z7ormjx7gzFhgFpg%3D%3D&_type=json`)
+      const promises = dealYMDs.map(ym =>
+        fetch(`https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade?LAWD_CD=${selectedDongCode}&DEAL_YMD=${ym}&serviceKey=K2kbs6Y7ensRMMi1KCRh%2FHDeBvqIx0oBk%2F2z6tksDZw1cTaZXDuNqYQJX2Er4CZWQXNOI6z7ormjx7gzFhgFpg%3D%3D&_type=json`)
           .then(res => res.json())
       );
 
@@ -79,23 +127,14 @@
       results.forEach((res, idx) => {
         const ym = dealYMDs[idx];
         const items = res.response?.body?.items?.item || [];
-        const prices = items
-          .filter(i => i.아파트.includes(apt))
-          .map(i => parseInt(i.거래금액.replace(",", "")));
+        const prices = items.filter(i => i.아파트.includes(apt)).map(i => parseInt(i.거래금액.replace(/,/g, "")));
         if (prices.length > 0) {
-          const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+          const avg = prices.reduce((a,b) => a+b, 0)/prices.length;
           monthlyAvg[ym] = avg;
         }
       });
 
       drawChart(monthlyAvg);
-    }
-
-    function getLawdCd(region) {
-      if (region.includes("안양시")) return "41170";
-      if (region.includes("강남구")) return "11680";
-      if (region.includes("성동구")) return "11200";
-      return null; // 더 많은 지역을 여기에 추가 가능
     }
 
     function getPastMonths(n) {
