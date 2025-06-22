@@ -94,10 +94,13 @@
       box.innerHTML = "";
       if (!val) return;
 
-      const source = type === 'region' ? dongList.map(d => d.name) : knownApts;
-      const matches = source.filter(name => name.includes(val)).slice(0, 7);
-
-      matches.forEach(name => {
+      let source = [];
+      if (type === 'region') {
+        source = dongList.map(d => d.name).filter(name => name.includes(val));
+      } else {
+        source = knownApts.filter(name => name.includes(val));
+      }
+      source.slice(0, 7).forEach(name => {
         const li = document.createElement("li");
         li.textContent = name;
         li.onclick = () => {
@@ -111,7 +114,7 @@
     async function fetchData() {
       const region = document.getElementById("regionInput").value.trim();
       const apt = document.getElementById("aptInput").value.trim();
-      const dong = dongList.find(d => region.includes(d.name));
+      const dong = dongList.find(d => d.name === region);
       if (!dong) return alert("해당 지역의 법정동코드를 찾을 수 없습니다.");
       selectedDongCode = dong.code.substring(0,5);
 
@@ -176,3 +179,4 @@
   </script>
 </body>
 </html>
+
