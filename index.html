@@ -2,86 +2,137 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <title>실거래가 조회기</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>실거래가 시세 조회</title>
   <style>
-    body { font-family: sans-serif; padding: 20px; }
-    input { width: 300px; padding: 8px; margin: 5px 0; }
-    ul { list-style: none; padding: 0; max-height: 150px; overflow-y: auto; border: 1px solid #ccc; }
-    li { padding: 5px; cursor: pointer; }
-    li:hover { background: #efefef; }
-    #result { margin-top: 20px; white-space: pre-wrap; font-size: 14px; }
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: #f9f9f9;
+      color: #333;
+      padding: 20px;
+    }
+    .container {
+      max-width: 600px;
+      margin: auto;
+      padding: 20px;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.05);
+    }
+    h1 {
+      font-size: 1.5rem;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    input {
+      width: 100%;
+      padding: 12px;
+      font-size: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+    button {
+      width: 100%;
+      padding: 12px;
+      background: #007bff;
+      color: white;
+      font-size: 1rem;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    canvas {
+      margin-top: 30px;
+    }
   </style>
 </head>
 <body>
-  <h2>🏠 실거래가 조회기 (전국, 아파트명 필터)</h2>
-  <input id="dongInput" placeholder="법정동 (예: 서울특별시 강남구 도곡동)" autocomplete="off" />
-  <ul id="suggestions"></ul>
-  <input id="aptInput" placeholder="아파트명 (선택, 예: 래미안)" />
+  <div class="container">
+    <h1>📊 아파트 실거래가 시세 (2년)</h1>
+    <input id="regionInput" placeholder="예: 경기 안양시" />
+    <input id="aptInput" placeholder="예: 삼성래미안아파트" />
+    <button onclick="fetchData()">조회하기</button>
+    <canvas id="priceChart" height="300"></canvas>
+  </div>
 
-  <button onclick="getData()">조회</button>
-
-  <div id="result"></div>
-
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
-    let dongList = [];
-    let selectedCode = "";
+    async function fetchData() {
+      const region = document.getElementById("regionInput").value.trim();
+      const apt = document.getElementById("aptInput").value.trim();
+      if (!region || !apt) return alert("지역과 아파트명을 모두 입력해주세요.");
 
-    // Load dong list
-    fetch("legal_dong_codes.json")
-      .then(res => res.json())
-      .then(data => dongList = data);
+      const dealYMDs = getPastMonths(24);
+      const code = getLawdCd(region);
+      if (!code) return alert("해당 지역의 법정동코드를 찾을 수 없습니다.");
 
-    const dongInput = document.getElementById("dongInput");
-    const aptInput = document.getElementById("aptInput");
-    const suggestionBox = document.getElementById("suggestions");
+      const promises = dealYMDs.map(ym => 
+        fetch(`https://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTrade?LAWD_CD=${code}&DEAL_YMD=${ym}&serviceKey=K2kbs6Y7ensRMMi1KCRh%2FHDeBvqIx0oBk%2F2z6tksDZw1cTaZXDuNqYQJX2Er4CZWQXNOI6z7ormjx7gzFhgFpg%3D%3D&_type=json`)
+          .then(res => res.json())
+      );
 
-    dongInput.addEventListener("input", () => {
-      const val = dongInput.value.trim();
-      suggestionBox.innerHTML = "";
-      if (val.length < 2) return;
+      const results = await Promise.all(promises);
+      const monthlyAvg = {};
 
-      const matches = dongList.filter(d => d.name.includes(val)).slice(0, 10);
-      matches.forEach(match => {
-        const li = document.createElement("li");
-        li.textContent = match.name;
-        li.onclick = () => {
-          dongInput.value = match.name;
-          selectedCode = match.code;
-          suggestionBox.innerHTML = "";
-        };
-        suggestionBox.appendChild(li);
+      results.forEach((res, idx) => {
+        const ym = dealYMDs[idx];
+        const items = res.response?.body?.items?.item || [];
+        const prices = items
+          .filter(i => i.아파트.includes(apt))
+          .map(i => parseInt(i.거래금액.replace(",", "")));
+        if (prices.length > 0) {
+          const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+          monthlyAvg[ym] = avg;
+        }
       });
-    });
 
-    async function getData() {
-      const aptName = aptInput.value.trim();
-      if (!selectedCode) {
-        document.getElementById("result").innerText = "법정동을 먼저 선택해주세요.";
-        return;
-      }
+      drawChart(monthlyAvg);
+    }
 
+    function getLawdCd(region) {
+      if (region.includes("안양시")) return "41170";
+      if (region.includes("강남구")) return "11680";
+      if (region.includes("성동구")) return "11200";
+      return null; // 더 많은 지역을 여기에 추가 가능
+    }
+
+    function getPastMonths(n) {
+      const list = [];
       const today = new Date();
-      const yearMonth = today.getFullYear().toString() + String(today.getMonth() + 1).padStart(2, "0");
-
-      const url = `https://api.odcloud.kr/api/15084084/v1/uddi:cb44f904-b33a-4b7f-a994-5d5d288ea27c?page=1&perPage=100&serviceKey=K2kbs6Y7ensRMMi1KCRh%2FHDeBvqIx0oBk%2F2z6tksDZw1cTaZXDuNqYQJX2Er4CZWQXNOI6z7ormjx7gzFhgFpg%3D%3D`;
-
-      try {
-        const response = await fetch(url);
-        const json = await response.json();
-        let data = json.data || [];
-
-        if (aptName) {
-          data = data.filter(item => item.아파트 && item.아파트.includes(aptName));
-        }
-
-        if (data.length === 0) {
-          document.getElementById("result").innerText = "해당 조건에 맞는 거래가 없습니다.";
-        } else {
-          document.getElementById("result").innerText = JSON.stringify(data, null, 2);
-        }
-      } catch (e) {
-        document.getElementById("result").innerText = "조회 실패!";
+      for (let i = 0; i < n; i++) {
+        const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+        const ym = `${d.getFullYear()}${("0" + (d.getMonth() + 1)).slice(-2)}`;
+        list.unshift(ym);
       }
+      return list;
+    }
+
+    function drawChart(data) {
+      const ctx = document.getElementById("priceChart").getContext("2d");
+      if (window.myChart) window.myChart.destroy();
+      window.myChart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: Object.keys(data),
+          datasets: [{
+            label: "평균 거래가 (만원)",
+            data: Object.values(data).map(v => Math.round(v / 10000)),
+            fill: false,
+            borderColor: "#007bff",
+            tension: 0.2
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            y: {
+              beginAtZero: false
+            }
+          }
+        }
+      });
     }
   </script>
 </body>
